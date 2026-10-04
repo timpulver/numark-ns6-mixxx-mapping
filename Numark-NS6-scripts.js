@@ -42,6 +42,11 @@ NumarkNS6.pitchBendSensitivity = 5; // Quanto menor, mais rápido ele empurra a 
 // A NS6 ainda entrega valores de posição depois do note-off do toque. O
 // handoff só ocorre depois deste período sem nenhuma posição válida.
 NumarkNS6.scratchReleaseDelayMs = 60;
+// "serato": releasing the platter hands back to normal playback immediately and the
+// platter's leftover spin is ignored for a moment (like Serato on a non-motorised jog).
+// "vinyl": the original behaviour - the track follows the platter until it stops.
+NumarkNS6.platterReleaseMode = "serato";
+NumarkNS6.releaseSettleMs = 300;
 
 // Filtro de ruído do fader de volume do deck 2.
 // A captura MIDI mostrou pulsos isolados 124..127 durante movimentos suaves.
@@ -1113,7 +1118,12 @@ NumarkNS6.jogMove14bit = function(ch, ctrl, val, st, grp) {
 
     // O note-off do sensor chega antes de a roda parar. Enquanto houver
     // movimento válido, mantenha o motor de scratch e adie o handoff.
-    if (!deck.jogTouched && deck.scratchReleaseTimer !== undefined && deck.scratchReleaseTimer !== 0) {
+    if (NumarkNS6.platterReleaseMode === "serato") {
+        // Leftover spin right after the hand left the platter must not bend the track.
+        if (!deck.jogTouched && deck.releasedAt !== undefined && Date.now() - deck.releasedAt < NumarkNS6.releaseSettleMs) {
+            return;
+        }
+    } else if (!deck.jogTouched && deck.scratchReleaseTimer !== undefined && deck.scratchReleaseTimer !== 0) {
         NumarkNS6.scheduleScratchHandoff(deckNum, deck, grp);
     }
     
@@ -1265,6 +1275,17 @@ NumarkNS6.jogTouch14bit = function (ch, ctrl, val, st, grp) {
         // motor de scratch ou mudar o estado de reprodução do deck.
         if (!deck.jogTouched) return;
         deck.jogTouched = false;
+        if (NumarkNS6.platterReleaseMode === "serato") {
+            deck.releasedAt = Date.now();
+            if (deck.scratchReleaseTimer !== undefined && deck.scratchReleaseTimer !== 0) {
+                engine.stopTimer(deck.scratchReleaseTimer);
+                deck.scratchReleaseTimer = 0;
+            }
+            // Hand back at once; with play on, Mixxx ramps smoothly to normal speed.
+            engine.scratchDisable(deckNum, true);
+            deck.wasPlayingBeforeScratch = false;
+            return;
+        }
         print("NS6 handoff release deck=" + deckNum + " play=" + engine.getValue(grp, "play") + " scratch=" + engine.isScratching(deckNum) + " rate=" + engine.getValue(grp, "scratch2"));
         NumarkNS6.scheduleScratchHandoff(deckNum, deck, grp);
     }
